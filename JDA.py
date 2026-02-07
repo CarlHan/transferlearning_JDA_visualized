@@ -5,18 +5,24 @@ import sklearn.metrics
 import sklearn.neighbors
 
 
+def _safe_normalize_columns(arr):
+    norms = np.linalg.norm(arr, axis=0)
+    norms[norms == 0] = 1.0
+    return arr / norms
+
+
 def kernel(ker, X, X2, gamma):
     if not ker or ker == 'primal':
         return X
     elif ker == 'linear':
-        if not X2:
+        if X2 is None:
             K = np.dot(X.T, X)
         else:
             K = np.dot(X.T, X2)
     elif ker == 'rbf':
         n1sq = np.sum(X ** 2, axis=0)
         n1 = X.shape[1]
-        if not X2:
+        if X2 is None:
             D = (np.ones((n1, 1)) * n1sq).T + np.ones((n1, 1)) * n1sq - 2 * np.dot(X.T, X)
         else:
             n2sq = np.sum(X2 ** 2, axis=0)
@@ -24,7 +30,7 @@ def kernel(ker, X, X2, gamma):
             D = (np.ones((n2, 1)) * n1sq).T + np.ones((n1, 1)) * n2sq - 2 * np.dot(X.T, X)
         K = np.exp(-gamma * D)
     elif ker == 'sam':
-        if not X2:
+        if X2 is None:
             D = np.dot(X.T, X)
         else:
             D = np.dot(X.T, X2)
@@ -59,19 +65,19 @@ class JDA:
         '''
         list_acc = []
         X = np.hstack((Xs.T, Xt.T))
-        X /= np.linalg.norm(X, axis=0)
+        X = _safe_normalize_columns(X)
         m, n = X.shape
         ns, nt = len(Xs), len(Xt)
         e = np.vstack((1.0 / ns * np.ones((ns, 1)), -1.0 / nt * np.ones((nt, 1))))
-        C = len(np.unique(Ys))
+        classes = np.unique(Ys.ravel())
         H = np.eye(n) - 1.0 / n * np.ones((n, n))
 
-        M = e * e.T * C
+        M = e * e.T * len(classes)
         Y_tar_pseudo = None
         for t in range(self.T):
             N = 0
             if Y_tar_pseudo is not None and len(Y_tar_pseudo) == nt:
-                for c in range(1, C + 1):
+                for c in classes:
                     e = np.zeros((n, 1))
                     tt = Ys == c
                     e[np.where(tt == True)] = 1.0 / len(Ys[np.where(Ys == c)])
@@ -87,10 +93,12 @@ class JDA:
             n_eye = m if self.kernel_type == 'primal' else n
             a, b = np.linalg.multi_dot([K, M, K.T]) + self.lamb * np.eye(n_eye), np.linalg.multi_dot([K, H, K.T])
             w, V = scipy.linalg.eig(a, b)
+            w = np.real(w)
+            V = np.real(V)
             ind = np.argsort(w)
             A = V[:, ind[:self.dim]]                ##transfer matrix
             Z = np.dot(A.T, K)
-            Z /= np.linalg.norm(Z, axis=0)
+            Z = _safe_normalize_columns(Z)
             Xs_new, Xt_new = Z[:, :ns].T, Z[:, ns:].T
             ## ML model start
             clf = sklearn.neighbors.KNeighborsClassifier(n_neighbors=1)
